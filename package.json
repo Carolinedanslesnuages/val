@@ -1,0 +1,13 @@
+{
+  "name": "@carolinedanslesnuages/val",
+  "version": "0.0.0",
+  "description": "Empreinte carbone de votre usage de Claude Code, estimée en fourchette (méthode EcoLogits, ADEME), à partir de ses journaux locaux.",
+  "type": "module",
+  "bin": { "val": "bin/val.mjs" },
+  "files": ["bin", "src"],
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "keywords": ["claude-code", "carbone", "ecologits", "ademe", "empreinte"],
+  "repository": { "type": "git", "url": "git+https://github.com/Carolinedanslesnuages/val.git" },
+  "license": "MIT"
+}
