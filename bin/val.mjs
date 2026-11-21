@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-/** Val : empreinte carbone de votre usage de Claude Code, à partir de ses journaux locaux. */
+/** Val: carbon footprint of your Claude Code usage, from its local logs. */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { fichiersJournaux, lireUsages } from '../src/journaux.mjs';
-import { regrouper, rapportTexte, texteMethode, jourLocal } from '../src/rapport.mjs';
+import { logFiles, readUsages } from '../src/logs.mjs';
+import { groupUsages, textReport, jsonReport, methodText, localDay } from '../src/report.mjs';
 
-const AIDE = `Val · empreinte carbone de votre usage de Claude Code
+const HELP = `Val · empreinte carbone de votre usage de Claude Code
 
 Usage : val [options]
 
@@ -21,64 +21,66 @@ Usage : val [options]
 
 Seuls les compteurs de tokens sont lus. Le contenu des échanges n'est jamais lu ni envoyé.`;
 
-function lireOptions(args) {
-  const o = { jours: 7, par: 'jour', dossier: join(homedir(), '.claude', 'projects') };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    const valeur = () => {
-      const v = args[++i];
-      if (v === undefined) throw new Error(`L'option ${a} attend une valeur.`);
-      return v;
+const ONE_DAY_MS = 86400000;
+
+function parseOptions(args) {
+  const options = { days: 7, groupBy: 'jour', folder: join(homedir(), '.claude', 'projects') };
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    const nextValue = () => {
+      const value = args[++index];
+      if (value === undefined) throw new Error(`L'option ${argument} attend une valeur.`);
+      return value;
     };
-    if (a === '--aide' || a === '-h' || a === '--help') o.aide = true;
-    else if (a === '--methode') o.methode = true;
-    else if (a === '--json') o.json = true;
-    else if (a === '--tout') o.tout = true;
-    else if (a === '--jours') o.jours = Number(valeur());
-    else if (a === '--depuis') o.depuis = valeur();
-    else if (a === '--jusqua') o.jusqua = valeur();
-    else if (a === '--par') o.par = valeur().normalize('NFD').replace(/\p{Diacritic}/gu, '');
-    else if (a === '--dossier') o.dossier = valeur();
-    else throw new Error(`Option inconnue : ${a}. Tapez « val --aide ».`);
+    if (argument === '--aide' || argument === '-h' || argument === '--help') options.help = true;
+    else if (argument === '--methode') options.method = true;
+    else if (argument === '--json') options.json = true;
+    else if (argument === '--tout') options.everything = true;
+    else if (argument === '--jours') options.days = Number(nextValue());
+    else if (argument === '--depuis') options.since = nextValue();
+    else if (argument === '--jusqua') options.until = nextValue();
+    else if (argument === '--par') options.groupBy = nextValue().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    else if (argument === '--dossier') options.folder = nextValue();
+    else throw new Error(`Option inconnue : ${argument}. Tapez « val --aide ».`);
   }
-  if (!Number.isInteger(o.jours) || o.jours < 1) throw new Error('--jours attend un nombre entier positif.');
-  return o;
+  if (!Number.isInteger(options.days) || options.days < 1) throw new Error('--jours attend un nombre entier positif.');
+  return options;
 }
 
-function dateLocale(texte, option) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(texte);
-  if (!m) throw new Error(`${option} attend une date AAAA-MM-JJ, par exemple 2026-11-01.`);
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+function parseLocalDate(text, optionName) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) throw new Error(`${optionName} attend une date AAAA-MM-JJ, par exemple 2026-11-01.`);
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 }
 
-async function principal() {
-  const o = lireOptions(process.argv.slice(2));
-  if (o.aide) return console.log(AIDE);
-  if (o.methode) return console.log(texteMethode());
+async function main() {
+  const options = parseOptions(process.argv.slice(2));
+  if (options.help) return console.log(HELP);
+  if (options.method) return console.log(methodText());
 
-  let depuis;
-  let jusqua;
-  if (o.depuis) depuis = dateLocale(o.depuis, '--depuis');
-  else if (!o.tout) {
-    const aujourdhui = new Date();
-    depuis = new Date(aujourdhui.getFullYear(), aujourdhui.getMonth(), aujourdhui.getDate() - (o.jours - 1));
+  let since;
+  let until;
+  if (options.since) since = parseLocalDate(options.since, '--depuis');
+  else if (!options.everything) {
+    const today = new Date();
+    since = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (options.days - 1));
   }
-  if (o.jusqua) {
-    jusqua = dateLocale(o.jusqua, '--jusqua');
-    jusqua.setDate(jusqua.getDate() + 1); // date incluse
+  if (options.until) {
+    until = parseLocalDate(options.until, '--jusqua');
+    until.setDate(until.getDate() + 1); // the end date is included
   }
 
-  const fichiers = await fichiersJournaux(o.dossier, depuis);
-  const usages = await lireUsages(fichiers, { depuis, jusqua });
-  const resultat = regrouper(usages, o.par);
-  const fin = jusqua ? new Date(jusqua.getTime() - 86400000) : new Date();
-  const periode = depuis ? `Du ${jourLocal(depuis)} au ${jourLocal(fin)}` : `Tout l'historique jusqu'au ${jourLocal(fin)}`;
+  const files = await logFiles(options.folder, since);
+  const grouped = groupUsages(await readUsages(files, { since, until }), options.groupBy);
+  const lastDay = until ? new Date(until.getTime() - ONE_DAY_MS) : new Date();
+  const period = since ? `Du ${localDay(since)} au ${localDay(lastDay)}` : `Tout l'historique jusqu'au ${localDay(lastDay)}`;
+  const context = { groupBy: options.groupBy, period, logCount: files.length };
 
-  if (o.json) return console.log(JSON.stringify({ periode, par: o.par, journaux: fichiers.length, ...resultat }, null, 2));
-  console.log(rapportTexte(resultat, { par: o.par, periode, nbFichiers: fichiers.length }));
+  if (options.json) return console.log(JSON.stringify(jsonReport(grouped, context), null, 2));
+  console.log(textReport(grouped, context));
 }
 
-principal().catch((e) => {
-  console.error(`val : ${e.message}`);
+main().catch((error) => {
+  console.error(`val : ${error.message}`);
   process.exit(1);
 });
