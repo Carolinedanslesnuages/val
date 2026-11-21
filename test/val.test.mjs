@@ -3,101 +3,105 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { empreinte, famille } from '../src/methode.mjs';
-import { fichiersJournaux, lireUsages, usageDeLigne, nomProjet } from '../src/journaux.mjs';
 import { homedir } from 'node:os';
-import { regrouper, semaineLocale } from '../src/rapport.mjs';
+import { footprint, modelFamily } from '../src/method.mjs';
+import { logFiles, readUsages, usageFromLine, projectName } from '../src/logs.mjs';
+import { groupUsages, localWeek } from '../src/report.mjs';
 
-const ici = dirname(fileURLToPath(import.meta.url));
-const JOURNAUX = join(ici, 'journaux');
-const val = (...args) => execFileSync(process.execPath, [join(ici, '..', 'bin', 'val.mjs'), '--dossier', JOURNAUX, ...args], { encoding: 'utf8', env: { ...process.env, TZ: 'Europe/Paris' } });
+const TEST_FOLDER = dirname(fileURLToPath(import.meta.url));
+const LOGS = join(TEST_FOLDER, 'logs');
+const runCli = (...args) => execFileSync(process.execPath, [join(TEST_FOLDER, '..', 'bin', 'val.mjs'), '--dossier', LOGS, ...args], {
+  encoding: 'utf8',
+  env: { ...process.env, TZ: 'Europe/Paris' },
+});
+const allUsages = async () => readUsages(await logFiles(LOGS));
 
 test('famille des modèles : un modèle inconnu prend la taille la plus prudente', () => {
-  assert.equal(famille('claude-haiku-5-5'), 'haiku');
-  assert.equal(famille('claude-sonnet-5-5'), 'sonnet');
-  assert.equal(famille('claude-opus-5-5'), 'opus');
-  assert.equal(famille('claude-fable-5-2'), 'opus');
+  assert.equal(modelFamily('claude-haiku-5-5'), 'haiku');
+  assert.equal(modelFamily('claude-sonnet-5-5'), 'sonnet');
+  assert.equal(modelFamily('claude-opus-5-5'), 'opus');
+  assert.equal(modelFamily('claude-fable-5-2'), 'opus');
 });
 
 test("l'empreinte est une fourchette, proportionnelle aux tokens produits", () => {
-  const un = empreinte([{ modele: 'claude-opus-5-5', tokensEntree: 0, tokensSortie: 1000 }]);
-  const deux = empreinte([{ modele: 'claude-opus-5-5', tokensEntree: 999999, tokensSortie: 2000 }]);
-  assert.ok(un.co2g.min > 0 && un.co2g.min < un.co2g.max);
-  assert.ok(Math.abs(deux.co2g.max / un.co2g.max - 2) < 1e-9, 'deux fois plus de tokens produits = deux fois plus');
-  assert.equal(deux.tokensEntree, 999999, 'les tokens lus sont comptés à part, sans effet sur le CO2');
+  const single = footprint([{ model: 'claude-opus-5-5', inputTokens: 0, outputTokens: 1000 }]);
+  const double = footprint([{ model: 'claude-opus-5-5', inputTokens: 999999, outputTokens: 2000 }]);
+  assert.ok(single.co2Grams.min > 0 && single.co2Grams.min < single.co2Grams.max);
+  assert.ok(Math.abs(double.co2Grams.max / single.co2Grams.max - 2) < 1e-9, 'deux fois plus de tokens produits = deux fois plus');
+  assert.equal(double.inputTokens, 999999, 'les tokens lus sont comptés à part, sans effet sur le CO2');
 });
 
 test('Haiku pèse moins que Opus pour les mêmes tokens', () => {
-  const h = empreinte([{ modele: 'haiku', tokensEntree: 0, tokensSortie: 1000 }]);
-  const o = empreinte([{ modele: 'opus', tokensEntree: 0, tokensSortie: 1000 }]);
-  assert.ok(h.co2g.max < o.co2g.min);
+  const haiku = footprint([{ model: 'haiku', inputTokens: 0, outputTokens: 1000 }]);
+  const opus = footprint([{ model: 'opus', inputTokens: 0, outputTokens: 1000 }]);
+  assert.ok(haiku.co2Grams.max < opus.co2Grams.min);
 });
 
 test("une ligne sans usage, cassée ou d'utilisateur est ignorée", () => {
-  assert.equal(usageDeLigne('{"type":"user","message":{"content":"x"}}'), null);
-  assert.equal(usageDeLigne('ligne cassée { "assistant" "usage"'), null);
-  assert.equal(usageDeLigne(''), null);
+  assert.equal(usageFromLine('{"type":"user","message":{"content":"x"}}'), null);
+  assert.equal(usageFromLine('ligne cassée { "assistant" "usage"'), null);
+  assert.equal(usageFromLine(''), null);
 });
 
 test('les réponses écrites sur plusieurs lignes ne sont comptées qu’une fois', async () => {
-  const usages = await lireUsages(await fichiersJournaux(JOURNAUX));
-  const opus = usages.filter((u) => u.modele === 'claude-opus-5-5');
+  const opus = (await allUsages()).filter((usage) => usage.model === 'claude-opus-5-5');
   assert.equal(opus.length, 1);
-  assert.equal(opus[0].tokensSortie, 200);
-  assert.equal(opus[0].tokensEntree, 1510);
+  assert.equal(opus[0].outputTokens, 200);
+  assert.equal(opus[0].inputTokens, 1510);
 });
 
 test('les messages <synthetic> de Claude Code sont exclus', async () => {
-  const usages = await lireUsages(await fichiersJournaux(JOURNAUX));
+  const usages = await allUsages();
   assert.equal(usages.length, 3);
-  assert.ok(!usages.some((u) => u.modele === '<synthetic>'));
+  assert.ok(!usages.some((usage) => usage.model === '<synthetic>'));
 });
 
 test('la période filtre les réponses', async () => {
-  const fichiers = await fichiersJournaux(JOURNAUX);
-  const usages = await lireUsages(fichiers, { depuis: new Date('2026-11-19T00:00:00Z') });
-  assert.deepEqual(usages.map((u) => u.modele), ['claude-sonnet-5-5']);
+  const usages = await readUsages(await logFiles(LOGS), { since: new Date('2026-11-19T00:00:00Z') });
+  assert.deepEqual(usages.map((usage) => usage.model), ['claude-sonnet-5-5']);
 });
 
 test('regroupement par projet et par semaine', async () => {
-  const usages = await lireUsages(await fichiersJournaux(JOURNAUX));
-  const parProjet = regrouper(usages, 'projet');
-  assert.deepEqual(parProjet.lignes.map((l) => l.nom).sort(), ['/Users/x/projet-a', '/Users/x/projet-b']);
-  assert.equal(parProjet.total.reponses, 3);
-  assert.equal(semaineLocale(new Date(2026, 10, 20)), 'semaine du 2026-11-16');
-  assert.throws(() => regrouper(usages, 'couleur'), /Regroupement inconnu/);
+  const usages = await allUsages();
+  const byProject = groupUsages(usages, 'projet');
+  assert.deepEqual(byProject.rows.map((groupRow) => groupRow.name).sort(), ['/Users/x/projet-a', '/Users/x/projet-b']);
+  assert.equal(byProject.total.answers, 3);
+  assert.equal(localWeek(new Date(2026, 10, 20)), 'semaine du 2026-11-16');
+  assert.throws(() => groupUsages(usages, 'couleur'), /Regroupement inconnu/);
 });
 
 test('rapport texte complet, sans aucun contenu des échanges', () => {
-  const sortie = val('--depuis', '2026-11-01', '--jusqua', '2026-11-30');
-  assert.match(sortie, /Du 2026-11-01 au 2026-11-30 · 3 réponses/);
-  assert.match(sortie, /2026-11-18/);
-  assert.match(sortie, /Total/);
-  assert.match(sortie, /km en voiture thermique/);
-  assert.match(sortie, /hypothèses/);
-  assert.doesNotMatch(sortie, /PRIVÉ|privée/);
+  const output = runCli('--depuis', '2026-11-01', '--jusqua', '2026-11-30');
+  assert.match(output, /Du 2026-11-01 au 2026-11-30 · 3 réponses/);
+  assert.match(output, /2026-11-18/);
+  assert.match(output, /Total/);
+  assert.match(output, /km en voiture thermique/);
+  assert.match(output, /hypothèses/);
+  assert.doesNotMatch(output, /PRIVÉ|privée/);
 });
 
-test('sortie JSON', () => {
-  const r = JSON.parse(val('--depuis', '2026-11-01', '--par', 'modèle', '--json'));
-  assert.equal(r.par, 'modele');
-  assert.equal(r.total.reponses, 3);
-  assert.equal(r.total.tokensSortie, 1500);
-  assert.equal(r.lignes.length, 3);
+test('sortie JSON : format public inchangé', () => {
+  const report = JSON.parse(runCli('--depuis', '2026-11-01', '--par', 'modèle', '--json'));
+  assert.deepEqual(Object.keys(report), ['periode', 'par', 'journaux', 'lignes', 'total']);
+  assert.deepEqual(Object.keys(report.lignes[0]), ['nom', 'reponses', 'energieWh', 'co2g', 'tokensSortie', 'tokensEntree']);
+  assert.equal(report.par, 'modele');
+  assert.equal(report.total.reponses, 3);
+  assert.equal(report.total.tokensSortie, 1500);
+  assert.equal(report.lignes.length, 3);
 });
 
 test('une option inconnue ou une date invalide donne une erreur claire', () => {
-  assert.throws(() => val('--nimporte'), /Option inconnue/);
-  assert.throws(() => val('--depuis', '18/11/2026'), /AAAA-MM-JJ/);
+  assert.throws(() => runCli('--nimporte'), /Option inconnue/);
+  assert.throws(() => runCli('--depuis', '18/11/2026'), /AAAA-MM-JJ/);
 });
 
 test('période sans réponse', () => {
-  assert.match(val('--depuis', '2020-01-01', '--jusqua', '2020-01-31'), /Aucune réponse de Claude sur cette période/);
+  assert.match(runCli('--depuis', '2020-01-01', '--jusqua', '2020-01-31'), /Aucune réponse de Claude sur cette période/);
 });
 
 test('nom de projet : chemin depuis le dossier personnel', () => {
-  assert.equal(nomProjet(homedir()), '~');
-  assert.equal(nomProjet(join(homedir(), 'atelier-po', 'interface', 'api')), '~/atelier-po/interface/api');
-  assert.equal(nomProjet('/srv/autre'), '/srv/autre');
-  assert.equal(nomProjet(undefined), '(inconnu)');
+  assert.equal(projectName(homedir()), '~');
+  assert.equal(projectName(join(homedir(), 'projets', 'boutique', 'api')), '~/projets/boutique/api');
+  assert.equal(projectName('/srv/autre'), '/srv/autre');
+  assert.equal(projectName(undefined), '(inconnu)');
 });
