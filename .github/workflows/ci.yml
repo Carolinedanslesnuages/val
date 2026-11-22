@@ -48,6 +48,19 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: Carolinedanslesnuages/constance/nommage-fichiers@v1
 
+  resume:
+    name: Résumé pour la relecture (Annie)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: Carolinedanslesnuages/annie@v1
+
   anti-fuite:
     name: Anti-fuite (gitleaks)
     runs-on: ubuntu-latest
