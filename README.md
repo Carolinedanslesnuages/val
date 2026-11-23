@@ -15,9 +15,9 @@ Le nom rend hommage à Valérie Masson-Delmotte, climatologue, qui a coprésidé
 Il faut Node.js 20 ou plus récent.
 
 ```sh
-npx github:Carolinedanslesnuages/val                 # les 7 derniers jours, par jour
-npx github:Carolinedanslesnuages/val --par projet    # par dossier de travail
-npx github:Carolinedanslesnuages/val --jours 30 --par semaine
+npx @carolinedanslesnuages/val                 # les 7 derniers jours, par jour
+npx @carolinedanslesnuages/val --par projet    # par dossier de travail
+npx @carolinedanslesnuages/val --jours 30 --par semaine
 ```
 
 Exemple (données de test du dépôt) :
